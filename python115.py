@@ -47,4 +47,5 @@ output.drop(['c', 's'], axis=1, inplace=True)
 # return volume weighted average price to a new column in the dataframe
 groupedoutput = output.groupby(output.index.to_period('T')).apply(wavg).reset_index(name="VWAP")
 
+
 print(groupedoutput)
