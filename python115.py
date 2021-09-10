@@ -1,64 +1,50 @@
-import numpy
-import websocket
+# Import WebSocket client library
+import time
+from websocket import create_connection
 import json
-from datetime import datetime
 import pandas as pd
 import numpy as np
 
-df_trades = pd.DataFrame()
+# Connect to WebSocket API and subscribe to trade feed for XBT/USD and XRP/USD
+ws = create_connection("wss://ws.finnhub.io?token=c4mes2aad3iak0au8hj0")
+ws.send('{"type":"subscribe","symbol":"BINANCE:BTCUSDT"}')
 payload_list = []
+output = pd.DataFrame()
+
+# how long to collect data for in minute, currently sitting at 3 minutes  (60 seconds * 3)
+timeout = time.time() + 60 * 3
 
 
-def on_message(ws, message):
-    datadict = json.loads(message)
-    global df_trades
-    # payload_list.append(datadict.copy())
+#  weighted average price
 
-    output = pd.DataFrame(datadict["data"][0], index=[0])
-    output['t'] = pd.to_datetime(output['t'], unit='ms')
-    output = output.set_index('t')
-
-    date = datetime.fromtimestamp(datadict["data"][0]["t"] // 1000)
-    print("Timestamp", date, "Price: ", datadict["data"][0]["p"], "Volume", datadict["data"][0]["v"])
-    # if df_trades.empty:
-    #     df_trades = output
-    # else:
-    #     df_trades = df_trades.append(output)
-
-    # print(payload_list)
-    # print(datadict)
-    # return datadict
+def wavg(group):
+    p = group['p']
+    v = group['v']
+    return (p * v).sum() / v.sum()
 
 
-def on_error(ws, error):
-    print(error)
+# Loop for certain amount of minutes defined and collect data
+while time.time() < timeout:
+    if output.empty:
+        datadict = json.loads(ws.recv())
+        output = pd.DataFrame(datadict["data"][0], index=[0])
+    else:
+        datadict = json.loads(ws.recv())
+        try:
+            output2 = pd.DataFrame(datadict["data"][0], index=[0])
+        # passing exception since recv() could return a ping json response
+        except Exception:
+            pass
+        output = output.append(output2)
 
+output['t'] = pd.to_datetime(output['t'], unit='ms')
+output['t'] = pd.to_datetime(output['t'], unit='ms')
 
-def on_close(ws):
-    print("### closed ###")
+# set the timestamp as an index
+output = output.set_index('t')
+output.drop(['c', 's'], axis=1, inplace=True)
 
+# return volume weighted average price to a new column in the dataframe
+groupedoutput = output.groupby(output.index.to_period('T')).apply(wavg).reset_index(name="VWAP")
 
-def on_open(ws):
-    ws.send('{"type":"subscribe","symbol":"BINANCE:BTCUSDT"}')
-
-
-# def func(df):
-#     timestep = 60
-#     seconds = (df.index.minute*60+df.index.second)-timestep
-#     weight = [k/timestep if n == 0 else (seconds[n] - seconds[n - 1])/timestep
-#               for n, k in enumerate(seconds)]
-#     return np.sum(weight*df.values)
-#
-#
-# df_trades.resample('1min', closed='right').apply(func)
-
-if __name__ == "__main__":
-    ws = websocket.WebSocketApp("wss://ws.finnhub.io?token=c4mes2aad3iak0au8hj0",
-                                on_message=on_message,
-                                on_error=on_error,
-                                on_close=on_close)
-
-    #df_trades = pd.DataFrame(payload_list)
-    #print(payload_list)
-    ws.on_open = on_open
-    ws.run_forever()
+print(groupedoutput)
